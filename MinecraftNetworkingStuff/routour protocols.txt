@@ -1,0 +1,52 @@
+1. arp cache
+    {1.1.1.1 = "QWERTYUIOP"}
+
+2. arp request
+    takes IP and interface as varibles
+    {
+        SourcePort = 80, 
+        TargetPort = 80, 
+        SourceMac = "QWERTYUIOP", 
+        TargetMac = "ALL",
+        SourceIp = "1.1.1.1",
+        TargetIp = "1.1.1.2",
+        Data = {protocol = "ARP", action = "GET"}
+    }
+    awaits response thats to own IP with ARP protocol and action "POST" and saves to cache
+    
+3. arp response
+    saves to cache and sends packet to source IP gets using get route and send
+    {
+        SourcePort = 80, 
+        TargetPort = 80, 
+        SourceMac = "QWERTYUIOP", 
+        TargetMac = "POIUYTREWQ",
+        SourceIp = "1.1.1.1",
+        TargetIp = "1.1.1.2",
+        Data = {protocol = "ARP", action = "POST"}
+    }
+
+4. send
+    determines next hop based on get route then arp cache if mapping not found do arp request
+
+5. recieve
+    if recived packets target MAC = "ALL" and protocol = "ARP" do arp recieve
+    if target Mac is itself and IP is not itself send to IP
+
+6. config
+    {
+        MAC = "",
+        IP = {LEFT = 1.1.1.1, RIGHT = 1.1.0.1},
+        interfaces = {LEFT = "QWERTY", RIGHT = "YTREWQ"}
+    }
+
+7. routing table
+    {
+        {Dest = "1.1.1.0", Mask = "255.255.255.0", Type = "DC", Target = "LEFT"},
+        {Dest = "1.1.0.0", Mask = "255.255.0.0", Type = "STATIC", Target = "1.1.0.1"}
+    }
+    ordered most to least specific netmask
+
+10. get route
+    loops through until it finds next hop
+    returns IP and interface
