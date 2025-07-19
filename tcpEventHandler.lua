@@ -15,7 +15,7 @@ function tcpEventHandler.tcp_open(localPort,remoteSocket,active)
         TCBList[connection].ISS = math.random(300)
         local synSegment = TcpLib.createSegment(connection,false,false,true,false,{})
         TcpLib.send(connection,synSegment)
-        TCBList[connection].SND.UNA = TCBList[connection]
+        TCBList[connection].SND.UNA = TCBList[connection].ISS
         TCBList[connection].SND.NXT = TCBList[connection].ISS + 1
         TCBList[connection].STATE ="SYN-SENT"
     end
@@ -23,7 +23,46 @@ end
 
 function tcpEventHandler.net_recieve(segmentString)
     local segment = s.unserialize(segmentString)
-    
+    local connection = TcpLib.getSegmentConnection(segment)
+    if TcpLib[connection] == nil then
+        connection = TCBList.getDefaultConnection(segment.targetPort)
+    end
+    TCBList[connection].SEG.SEQ = segment.SEQ
+    TCBList[connection].SEG.ACK = segment.ACK
+    local segmentLength = 0
+    if segment.data ~= nil then
+        segmentLength = segmentLength + s.serialize(segment.data).length()
+    end
+    if segment.flags.SYN == true then
+        segmentLength = segmentLength + 1
+    end
+    if segment.flags.FIN == true then
+        segmentLength = segmentLength + 1
+    end
+    TCBList[connection].Segment = segment
+    TCBList[connection].SEG.LEN = s.serialize(segment.data).length() + segment.flags.SYN + segment.flags.FIN
+    local state = TCBList[connection].STATE
+    if state == "LISTEN" then
+        if TCBList[connection].Segment.flags.SYN == true then
+            TCBList[connection].RCV.NXT = TCBList[connection].SEG.SEQ + 1
+            TCBList[connection].IRS = TCBList[connection].SEG.SEQ
+
+            TCBList[connection].ISS = math.random(300)
+            local synSegment = TcpLib.createSegment(connection,true,false,true,false,{})
+            TcpLib.send(connection,synSegment)
+            TCBList[connection].SND.UNA = TCBList[connection].ISS
+            TCBList[connection].SND.NXT = TCBList[connection].ISS + 1
+            TCBList[connection].STATE = "SYN-RECIEVED"
+
+            if TCBList[connection].REMOTESOCKET == {IP = "0.0.0.0",PORT = 0} then
+                TCBList[connection].REMOTESOCKET.IP = TCBList[connection].Segment.SourceIp
+                TCBList[connection].REMOTESOCKET.PORT = TCBList[connection].Segment.sourcePort
+                local newConnection = TcpLib.getConnectionId(TCBList[connection].LOCALSOCKET.PORT,TCBList[connection].REMOTESOCKET)
+                TCBList[newConnection] = TCBList[connection]
+                TCBList[connection] = nil
+            end
+        end
+    end
 end
 
 function tcpEventHandler.tcp_status(connectionId)

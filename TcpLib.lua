@@ -18,6 +18,11 @@ function TcpLib.getLocalSocket(port)
     return {IP = config.IP.MAIN, PORT = port}
 end
 
+function TcpLib.getDefaultConnection(port)
+    local localSocket = TcpLib.getLocalSocket(port)
+    return localSocket.IP..port.."0.0.0.0"..0
+end
+
 function TcpLib.createSegment(connectionId,ack,rst,syn,fin,data)
     local seqNum
     if syn == true then
