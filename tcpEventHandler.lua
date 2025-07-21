@@ -62,6 +62,21 @@ function tcpEventHandler.net_recieve(segmentString)
                 TCBList[connection] = nil
             end
         end
+    elseif state == "SYN-SENT" then
+        if TCBList[connection].SND.UNA < TCBList[connection].SEG.NXT and TCBList[connection].SEG.NXT == TCBList[connection].SND.ACK then
+            if TCBList[connection].Segment.flags.SYN == true then
+                TCBList[connection].RCV.NXT = TCBList[connection].SEG.SEQ + 1
+                TCBList[connection].SND.UNA = TCBList[connection].SEG.ACK
+                TcpLib.updateUna(connection)
+                if TCBList[connection].SND.UNA > TCBList[connection].ISS then
+                    TCBList[connection].STATE = "ESTABLISHED"
+                    local ackSegment = TcpLib.createSegment(connection,true,false,false,false,{})
+                    TcpLib.send(connection,ackSegment)
+                end
+            end
+        end
+    elseif state == "SYN-RECEIVED" then
+        
     end
 end
 

@@ -23,6 +23,21 @@ function TcpLib.getDefaultConnection(port)
     return localSocket.IP..port.."0.0.0.0"..0
 end
 
+function TcpLib.updateUna(connectionId)
+    TCBList[connectionId].SND.UNA = TCBList[connectionId].SEG.ACK
+    local retransmitSegment = TCBList[connectionId].RETRANSMISSION:check()
+    while retransmitSegment.SEQ < TCBList[connectionId].SND.UNA do
+        retransmitSegment = TCBList[connectionId].RETRANSMISSION:pull()
+        local timeOut = TCBList[connectionId].RETRANSMISSION.timeOutId
+        TCBList[connectionId].RETRANSMISSION.timeOutId = nil
+        event.cancel(timeOut)
+        retransmitSegment = TCBList[connectionId].RETRANSMISSION:check()
+    end
+    if TCBList[connectionId].RETRANSMISSION.timeOutId == nil then
+        TCBList[connectionId].RETRANSMISSION.timeOutId = event.timer(10,function() event.push("tcp_retransmit",connectionId) end)
+    end
+end
+
 function TcpLib.createSegment(connectionId,ack,rst,syn,fin,data)
     local seqNum
     if syn == true then
