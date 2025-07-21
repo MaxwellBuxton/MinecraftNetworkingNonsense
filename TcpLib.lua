@@ -76,4 +76,19 @@ function TcpLib.send(connectionId,segment)
     TcpLib.queueRetransmission(connectionId,segment)
 end
 
+function TcpLib.sendAck(connectionId,segment)
+    local targetIp = TCBList[connectionId].REMOTESOCKET.IP
+    event.push("net_send",targetIp,s.serialize(segment))
+end
+
+function TcpLib.checkSeq(connectionId)
+    if TCBList[connectionId].SEG.SEQ == TCBList[connectionId].RCV.NXT then
+        return true
+    else
+        local ackSegment TcpLib.createSegment(connectionId,true,false,false,false,{})
+        TcpLib.sendAck(connectionId,ackSegment)
+        return false
+    end
+end
+
 return TcpLib
