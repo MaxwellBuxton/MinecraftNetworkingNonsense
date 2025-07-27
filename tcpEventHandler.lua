@@ -1,15 +1,23 @@
 local TcpLib = require("TcpLib")
 local s = require("serialization")
+local event = require("event")
 
 local tcpEventHandler = {}
 
-function tcpEventHandler.tcp_open(localPort,remoteSocket,active)
+function tcpEventHandler.tcp_open(localPort,remoteSocketString,active)
+    local remoteSocket = s.unserialize(remoteSocketString)
     local connection = TcpLib.getConnectionId(localPort,remoteSocket)
+    TCBList[connection] = {}
+    TCBList[connection].RCV = {}
+    TCBList[connection].SND = {}
+    TCBList[connection].SEG = {}
     TCBList[connection].LOCALSOCKET = TcpLib.getLocalSocket(localPort)
     TCBList[connection].REMOTESOCKET = remoteSocket
     TCBList[connection].RETRANSMISSION = Queue.new()
+    TCBList[connection].RETRANSMISSION.count = 0
     if active == false then
         TCBList[connection].STATE ="LISTEN"
+        TcpLib.returnOpen(connection,"opened listen connection on: "..connection)
         return
     else
         TCBList[connection].ISS = math.random(300)
@@ -18,20 +26,22 @@ function tcpEventHandler.tcp_open(localPort,remoteSocket,active)
         TCBList[connection].SND.UNA = TCBList[connection].ISS
         TCBList[connection].SND.NXT = TCBList[connection].ISS + 1
         TCBList[connection].STATE ="SYN-SENT"
+        TcpLib.returnOpen(connection,"sent SYN segment on: "..connection)
     end
 end
 
 function tcpEventHandler.net_recieve(segmentString)
     local segment = s.unserialize(segmentString)
     local connection = TcpLib.getSegmentConnection(segment)
-    if TcpLib[connection] == nil then
-        connection = TCBList.getDefaultConnection(segment.targetPort)
+    if TCBList[connection] == nil then
+        connection = TcpLib.getDefaultConnection(segment.targetPort)
     end
     TCBList[connection].SEG.SEQ = segment.SEQ
     TCBList[connection].SEG.ACK = segment.ACK
     local segmentLength = 0
-    if segment.data ~= nil then
-        segmentLength = segmentLength + s.serialize(segment.data).length()
+    if segment.data ~= {} then
+        local dataString = s.serialize(segment.data)
+        segmentLength = segmentLength + #dataString
     end
     if segment.flags.SYN == true then
         segmentLength = segmentLength + 1
@@ -40,7 +50,7 @@ function tcpEventHandler.net_recieve(segmentString)
         segmentLength = segmentLength + 1
     end
     TCBList[connection].Segment = segment
-    TCBList[connection].SEG.LEN = s.serialize(segment.data).length() + segment.flags.SYN + segment.flags.FIN
+    TCBList[connection].SEG.LEN = segmentLength
     local state = TCBList[connection].STATE
     if state == "LISTEN" then
         if TCBList[connection].Segment.flags.SYN == true then
@@ -48,30 +58,33 @@ function tcpEventHandler.net_recieve(segmentString)
             TCBList[connection].IRS = TCBList[connection].SEG.SEQ
 
             TCBList[connection].ISS = math.random(300)
-            local synSegment = TcpLib.createSegment(connection,true,false,true,false,{})
-            TcpLib.send(connection,synSegment)
             TCBList[connection].SND.UNA = TCBList[connection].ISS
             TCBList[connection].SND.NXT = TCBList[connection].ISS + 1
-            TCBList[connection].STATE = "SYN-RECIEVED"
+            TCBList[connection].STATE = "SYN-RECEIVED"
 
-            if TCBList[connection].REMOTESOCKET == {IP = "0.0.0.0",PORT = 0} then
-                TCBList[connection].REMOTESOCKET.IP = TCBList[connection].Segment.SourceIp
+            if TCBList[connection].REMOTESOCKET.IP == "0.0.0.0" and TCBList[connection].REMOTESOCKET.PORT == "0" then
+                TCBList[connection].REMOTESOCKET.IP = TCBList[connection].Segment.sourceIP
                 TCBList[connection].REMOTESOCKET.PORT = TCBList[connection].Segment.sourcePort
                 local newConnection = TcpLib.getConnectionId(TCBList[connection].LOCALSOCKET.PORT,TCBList[connection].REMOTESOCKET)
                 TCBList[newConnection] = TCBList[connection]
                 TCBList[connection] = nil
+                TcpLib.returnOpen(newConnection,"swapping connection: "..connection.."to :"..newConnection)
+                connection = newConnection
             end
+            local synSegment = TcpLib.createSegment(connection,true,false,true,false,{})
+            TcpLib.send(connection,synSegment)
+            TcpLib.returnOpen(connection,"Recieved SYN request, sending SYN/ACK on"..connection)
         end
     elseif state == "SYN-SENT" then
-        if TCBList[connection].SND.UNA < TCBList[connection].SEG.NXT and TCBList[connection].SEG.NXT == TCBList[connection].SND.ACK then
+        if TCBList[connection].SND.UNA < TCBList[connection].SEG.ACK and TCBList[connection].SEG.ACK == TCBList[connection].SND.NXT then
             if TCBList[connection].Segment.flags.SYN == true then
                 TCBList[connection].RCV.NXT = TCBList[connection].SEG.SEQ + 1
-                TCBList[connection].SND.UNA = TCBList[connection].SEG.ACK
                 TcpLib.updateUna(connection)
                 if TCBList[connection].SND.UNA > TCBList[connection].ISS then
                     TCBList[connection].STATE = "ESTABLISHED"
                     local ackSegment = TcpLib.createSegment(connection,true,false,false,false,{})
                     TcpLib.sendAck(connection,ackSegment)
+                    TcpLib.returnOpen(connection,"SYN Acknowladged entering ESTABLISHED on"..connection)
                 end
             end
         end
@@ -81,7 +94,9 @@ function tcpEventHandler.net_recieve(segmentString)
                 return
             end
             if TCBList[connection].SND.UNA < TCBList[connection].SEG.ACK and TCBList[connection].SEG.ACK <= TCBList[connection].SND.NXT then
+                TcpLib.updateUna(connection)
                 TCBList[connection].STATE = "ESTABLISHED"
+                TcpLib.returnOpen(connection,"SYN Acknowladged entering ESTABLISHED on"..connection)
             end
         end
     end
@@ -91,13 +106,17 @@ function tcpEventHandler.tcp_status(connectionId)
     event.push("tcp_status_return",TCBList[connectionId].STATE,TCBList[connectionId])
 end
 
-function tcpEventHandler.tcp_retransmission(connectionId)
+function tcpEventHandler.tcp_retransmit(connectionId)
     if TCBList[connectionId].RETRANSMISSION ~= nil then
         if TCBList[connectionId].RETRANSMISSION:isEmpty() == false then
+            if TCBList[connectionId].RETRANSMISSION.count > 4 then
+                return
+            end
             local targetIp = TCBList[connectionId].REMOTESOCKET.IP
-            local segment = TCBList.RETRANSMISSION:check()
+            local segment = TCBList[connectionId].RETRANSMISSION:check()
             event.push("net_send",targetIp,s.serialize(segment))
             TCBList[connectionId].RETRANSMISSION.timeOutId = event.timer(10,function() event.push("tcp_retransmit",connectionId) end)
+            TCBList[connectionId].RETRANSMISSION.count = TCBList[connectionId].RETRANSMISSION.count + 1
         end
     end
 end

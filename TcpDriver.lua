@@ -44,7 +44,7 @@ EventQueue = Queue.new()
 EventQueue.State = "idle"
 
 function TcpEvent(eventId, ...)
-    local queuedEvent = {id = eventId, arguments = ...}
+    local queuedEvent = {id = eventId, arguments = table.pack(...)}
     EventQueue:insert(queuedEvent)
     if EventQueue.State == "idle" then
         EventQueue.State = "active"
@@ -59,3 +59,9 @@ function TcpProccessor()
     end
     EventQueue.State = "idle"
 end
+
+event.listen("net_recieve",TcpEvent)
+event.listen("tcp_open",TcpEvent)
+event.listen("tcp_status",TcpEvent)
+event.listen("tcp_retransmit",TcpEvent)
+event.listen("tcp_procces",TcpProccessor)

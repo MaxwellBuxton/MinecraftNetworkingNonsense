@@ -23,17 +23,31 @@ function TcpLib.getDefaultConnection(port)
     return localSocket.IP..port.."0.0.0.0"..0
 end
 
+function TcpLib.returnOpen(connectionId,message)
+    event.push("tcp_open_return",TCBList[connectionId].LOCALSOCKET.PORT,connectionId,TCBList[connectionId].STATE,message)
+end
+
 function TcpLib.updateUna(connectionId)
     TCBList[connectionId].SND.UNA = TCBList[connectionId].SEG.ACK
+    if TCBList[connectionId].RETRANSMISSION:isEmpty() == true then
+        return
+    end
     local retransmitSegment = TCBList[connectionId].RETRANSMISSION:check()
-    while retransmitSegment.SEQ < TCBList[connectionId].SND.UNA do
+    local reSeq = retransmitSegment.SEQ
+    while reSeq < TCBList[connectionId].SND.UNA do
         retransmitSegment = TCBList[connectionId].RETRANSMISSION:pull()
         local timeOut = TCBList[connectionId].RETRANSMISSION.timeOutId
         TCBList[connectionId].RETRANSMISSION.timeOutId = nil
+        TCBList[connectionId].RETRANSMISSION.count = 0
         event.cancel(timeOut)
-        retransmitSegment = TCBList[connectionId].RETRANSMISSION:check()
+        if TCBList[connectionId].RETRANSMISSION:isEmpty() == false then
+            retransmitSegment = TCBList[connectionId].RETRANSMISSION:check()
+            reSeq = retransmitSegment.SEQ
+        else
+            reSeq = TCBList[connectionId].SND.UNA
+        end
     end
-    if TCBList[connectionId].RETRANSMISSION.timeOutId == nil then
+    if TCBList[connectionId].RETRANSMISSION.timeOutId == nil and TCBList[connectionId].RETRANSMISSION:isEmpty() == false then
         TCBList[connectionId].RETRANSMISSION.timeOutId = event.timer(10,function() event.push("tcp_retransmit",connectionId) end)
     end
 end
@@ -55,11 +69,9 @@ function TcpLib.createSegment(connectionId,ack,rst,syn,fin,data)
             RST = rst,
             SYN = syn,
             FIN = fin
-        }
+        },
+        data = data
     }
-    for i,v in pairs(data) do
-        segment[i] = v
-    end
     return segment
 end
 

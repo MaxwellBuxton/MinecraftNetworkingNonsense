@@ -111,6 +111,12 @@ else
     
     InstallFile("networkTest.lua","/networkTest.lua")
 
+    InstallFile("TcpLib.lua","/lib/TcpLib.lua")
+
+    InstallFile("tcpEventHandler.lua","/lib/tcpEventHandler.lua")
+
+    InstallFile("TcpDriver.lua","/TcpDriver.lua")
+
     print("install complete")
     print("use networkTest for testing connections")
 end
