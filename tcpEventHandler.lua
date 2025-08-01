@@ -1,6 +1,7 @@
 local TcpLib = require("TcpLib")
 local s = require("serialization")
 local event = require("event")
+local segProcces = require("tcpSegmentProccessor")
 
 local tcpEventHandler = {}
 
@@ -15,6 +16,8 @@ function tcpEventHandler.tcp_open(localPort,remoteSocketString,active)
     TCBList[connection].REMOTESOCKET = remoteSocket
     TCBList[connection].RETRANSMISSION = Queue.new()
     TCBList[connection].RETRANSMISSION.count = 0
+    TCBList[connection].RECIEVE = {INCOMING = {}, REQUEST = false, PUSH = false}
+    TCBList[connection].SENDBUFFER = {}
     if active == false then
         TCBList[connection].STATE ="LISTEN"
         TcpLib.returnOpen(connection,"opened listen connection on: "..connection)
@@ -25,7 +28,7 @@ function tcpEventHandler.tcp_open(localPort,remoteSocketString,active)
         TcpLib.send(connection,synSegment)
         TCBList[connection].SND.UNA = TCBList[connection].ISS
         TCBList[connection].SND.NXT = TCBList[connection].ISS + 1
-        TCBList[connection].STATE ="SYN-SENT"
+        TCBList[connection].STATE ="SYNSENT"
         TcpLib.returnOpen(connection,"sent SYN segment on: "..connection)
     end
 end
@@ -39,8 +42,8 @@ function tcpEventHandler.net_recieve(segmentString)
     TCBList[connection].SEG.SEQ = segment.SEQ
     TCBList[connection].SEG.ACK = segment.ACK
     local segmentLength = 0
-    if segment.data ~= {} then
-        local dataString = s.serialize(segment.data)
+    local dataString = s.serialize(segment.data)
+    if dataString ~= "{}" or dataString ~= nil then
         segmentLength = segmentLength + #dataString
     end
     if segment.flags.SYN == true then
@@ -52,54 +55,8 @@ function tcpEventHandler.net_recieve(segmentString)
     TCBList[connection].Segment = segment
     TCBList[connection].SEG.LEN = segmentLength
     local state = TCBList[connection].STATE
-    if state == "LISTEN" then
-        if TCBList[connection].Segment.flags.SYN == true then
-            TCBList[connection].RCV.NXT = TCBList[connection].SEG.SEQ + 1
-            TCBList[connection].IRS = TCBList[connection].SEG.SEQ
-
-            TCBList[connection].ISS = math.random(300)
-            TCBList[connection].SND.UNA = TCBList[connection].ISS
-            TCBList[connection].SND.NXT = TCBList[connection].ISS + 1
-            TCBList[connection].STATE = "SYN-RECEIVED"
-
-            if TCBList[connection].REMOTESOCKET.IP == "0.0.0.0" and TCBList[connection].REMOTESOCKET.PORT == "0" then
-                TCBList[connection].REMOTESOCKET.IP = TCBList[connection].Segment.sourceIP
-                TCBList[connection].REMOTESOCKET.PORT = TCBList[connection].Segment.sourcePort
-                local newConnection = TcpLib.getConnectionId(TCBList[connection].LOCALSOCKET.PORT,TCBList[connection].REMOTESOCKET)
-                TCBList[newConnection] = TCBList[connection]
-                TCBList[connection] = nil
-                TcpLib.returnOpen(newConnection,"swapping connection: "..connection.."to :"..newConnection)
-                connection = newConnection
-            end
-            local synSegment = TcpLib.createSegment(connection,true,false,true,false,{})
-            TcpLib.send(connection,synSegment)
-            TcpLib.returnOpen(connection,"Recieved SYN request, sending SYN/ACK on"..connection)
-        end
-    elseif state == "SYN-SENT" then
-        if TCBList[connection].SND.UNA < TCBList[connection].SEG.ACK and TCBList[connection].SEG.ACK == TCBList[connection].SND.NXT then
-            if TCBList[connection].Segment.flags.SYN == true then
-                TCBList[connection].RCV.NXT = TCBList[connection].SEG.SEQ + 1
-                TcpLib.updateUna(connection)
-                if TCBList[connection].SND.UNA > TCBList[connection].ISS then
-                    TCBList[connection].STATE = "ESTABLISHED"
-                    local ackSegment = TcpLib.createSegment(connection,true,false,false,false,{})
-                    TcpLib.sendAck(connection,ackSegment)
-                    TcpLib.returnOpen(connection,"SYN Acknowladged entering ESTABLISHED on"..connection)
-                end
-            end
-        end
-    elseif state == "SYN-RECEIVED" then
-        if TcpLib.checkSeq(connection) then
-            if TCBList[connection].Segment.flags.ACK == false then
-                return
-            end
-            if TCBList[connection].SND.UNA < TCBList[connection].SEG.ACK and TCBList[connection].SEG.ACK <= TCBList[connection].SND.NXT then
-                TcpLib.updateUna(connection)
-                TCBList[connection].STATE = "ESTABLISHED"
-                TcpLib.returnOpen(connection,"SYN Acknowladged entering ESTABLISHED on"..connection)
-            end
-        end
-    end
+    
+    segProcces[TCBList[connection].STATE](connection)
 end
 
 function tcpEventHandler.tcp_status(connectionId)
