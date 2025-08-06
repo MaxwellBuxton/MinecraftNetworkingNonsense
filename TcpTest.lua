@@ -32,7 +32,7 @@ elseif args[1] == "client" then
     local data = nil
     if status == "OK" then
         connection:send({message = "ping"})
-        while data ~= nil and status == "OK" do
+        while data == nil and status == "OK" do
             data,status = connection:recieve()
         end
         if status == "OK" and data ~= nil then

@@ -74,7 +74,7 @@ end
 
 function tcpSegmentProccessor.ESTABLISHED(connection)
     if TcpLib.checkSeq(connection) then
-        if TcpLib.checkRst then
+        if TcpLib.checkRst(connection) then
             return
         end
 
@@ -95,13 +95,17 @@ function tcpSegmentProccessor.ESTABLISHED(connection)
             local finAck = TcpLib.createSegment(connection,true,false,false,false,{})
             TcpLib.sendAck(connection,finAck)
             TCBList[connection].STATE = "CLOSEWAIT"
+            if TCBList[connection].RECIEVE.REQUEST == true and #TCBList[connection].RECIEVE.INCOMING == 0 then
+                TCBList[connection].RECIEVE.REQUEST = false
+                event.push("tcp_recieve_return",connection,nil,nil,"CLOSING")
+            end
         end
     end
 end
 
 function tcpSegmentProccessor.FINWAIT1(connection)
     if TcpLib.checkSeq(connection) then
-        if TcpLib.checkRst then
+        if TcpLib.checkRst(connection) then
             return
         end
 
@@ -138,7 +142,7 @@ end
 
 function tcpSegmentProccessor.FINWAIT2(connection)
     if TcpLib.checkSeq(connection) then
-        if TcpLib.checkRst then
+        if TcpLib.checkRst(connection) then
             return
         end
 
@@ -165,7 +169,7 @@ end
 
 function tcpSegmentProccessor.CLOSEWAIT(connection)
     if TcpLib.checkSeq(connection) then
-        if TcpLib.checkRst then
+        if TcpLib.checkRst(connection) then
             return
         end
 

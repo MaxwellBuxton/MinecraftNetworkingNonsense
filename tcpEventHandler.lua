@@ -74,8 +74,8 @@ end
 
 function tcpEventHandler.tcp_send(connectionId,...)
     local sendData = table.pack(...)
-    for i,v in pairs(sendData) do
-        table.insert(TCBList[connectionId].SENDBUFFER,v)
+    for  i = 1, sendData.n do
+        table.insert(TCBList[connectionId].SENDBUFFER,sendData[i])
     end
     TcpLib.sendData(connectionId)
 end
@@ -96,7 +96,7 @@ function tcpEventHandler.tcp_close(connectionId)
     end
     TCBList[connectionId].SENDBUFFER.FIN = true
     TcpLib.sendData(connectionId)
-    if TCBList[connectionId].STATE ~= "CLOSEWAIT" then
+    if TCBList[connectionId].STATE ~= "CLOSEWAIT" and TCBList[connectionId].STATE ~= "LASTACK" then
         TCBList[connectionId].STATE = "FINWAIT1"
     end
 end

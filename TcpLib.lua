@@ -163,6 +163,7 @@ function TcpLib.sendData(connectionId)
             TCBList[connectionId].SENDBUFFER.FIN = false
             if TCBList[connectionId].STATE == "CLOSEWAIT" then
                 TCBList[connectionId].STATE = "LASTACK"
+                return true
             end
         end
     end
@@ -171,7 +172,7 @@ end
 
 function TcpLib.proccessSegmentText(connectionId)
     local proccessText = s.serialize(TCBList[connectionId].Segment.data)
-    if proccessText ~= "{}" or proccessText ~= "" or proccessText ~= nil then
+    if proccessText ~= "{}" and proccessText ~= "" and proccessText ~= nil then
         table.insert(TCBList[connectionId].RECIEVE.INCOMING, proccessText)
         if TCBList[connectionId].Segment.flags.PSH == true then
             TCBList[connectionId].RECIEVE.PUSH = true
