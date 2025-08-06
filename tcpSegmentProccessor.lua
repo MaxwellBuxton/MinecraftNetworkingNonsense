@@ -20,12 +20,12 @@ function tcpSegmentProccessor.LISTEN(connection)
             local newConnection = TcpLib.getConnectionId(TCBList[connection].LOCALSOCKET.PORT,TCBList[connection].REMOTESOCKET)
             TCBList[newConnection] = TCBList[connection]
             TCBList[connection] = nil
-            TcpLib.returnOpen(newConnection,"swapping connection: "..connection.."to :"..newConnection)
+            event.push("tcp_listen_return",connection,newConnection)
             connection = newConnection
         end
         local synSegment = TcpLib.createSegment(connection,true,false,true,false,{})
         TcpLib.send(connection,synSegment)
-        TcpLib.returnOpen(connection,"Recieved SYN request, sending SYN/ACK on"..connection)
+        event.push("tcp_log_return",connection,"Recieved SYN request, sending SYN/ACK on"..connection)
     end
 end
 
@@ -38,7 +38,8 @@ function tcpSegmentProccessor.SYNSENT(connection)
                 TCBList[connection].STATE = "ESTABLISHED"
                 local ackSegment = TcpLib.createSegment(connection,true,false,false,false,{})
                 TcpLib.sendAck(connection,ackSegment)
-                TcpLib.returnOpen(connection,"SYN Acknowladged entering ESTABLISHED on"..connection)
+                event.push("tcp_open_return",connection,"OK")
+                event.push("tcp_log_return",connection,"SYN Acknowladged entering ESTABLISHED on"..connection)
             end
         end
     end
@@ -52,7 +53,21 @@ function tcpSegmentProccessor.SYNRECEIVED(connection)
         if TCBList[connection].SND.UNA < TCBList[connection].SEG.ACK and TCBList[connection].SEG.ACK <= TCBList[connection].SND.NXT then
             TcpLib.updateUna(connection)
             TCBList[connection].STATE = "ESTABLISHED"
-            TcpLib.returnOpen(connection,"SYN Acknowladged entering ESTABLISHED on"..connection)
+            event.push("tcp_open_return",connection,"OK")
+            event.push("tcp_log_return",connection,"SYN Acknowladged entering ESTABLISHED on"..connection)
+        else
+            TcpLib.resetConnection(connection)
+            return
+        end
+
+        TcpLib.proccessSegmentText(connection)
+
+        if TCBList[connection].Segment.flags.FIN then
+            event.push("tcp_close_return",connection,"CLOSING")
+            TCBList[connection].RCV.NXT = TCBList[connection].RCV.NXT + 1
+            local finAck = TcpLib.createSegment(connection,true,false,false,false,{})
+            TcpLib.sendAck(connection,finAck)
+            TCBList[connection].STATE = "CLOSEWAIT"
         end
     end
 end
@@ -62,63 +77,187 @@ function tcpSegmentProccessor.ESTABLISHED(connection)
         if TcpLib.checkRst then
             return
         end
+
         if TCBList[connection].Segment.flags.SYN then
             TcpLib.resetConnection(connection)
             return
         end
-        if TCBList[connection].Segment.flags.ACK == false then
+
+        if TcpLib.checkAck(connection) then
             return
         end
-        if TCBList[connection].SND.UNA < TCBList[connection].SEG.ACK and TCBList[connection].SEG.ACK <= TCBList[connection].SND.NXT then
-            TcpLib.updateUna(connection)
-        elseif TCBList[connection].SEG.ACK > TCBList[connection].SND.NXT then
-            local ackSegment = TcpLib.createSegment(connection,true,false,false,false,{})
-            TcpLib.sendAck(connection,ackSegment)
-            return
-        end
-        local proccessText = s.serialize(TCBList[connection].Segment.data)
-        if proccessText ~= "{}" or proccessText ~= "" or proccessText ~= nil then
-            table.insert(TCBList[connection].RECIEVE.INCOMING, proccessText)
-            if TCBList[connection].Segment.flags.PSH == true then
-                TCBList[connection].RECIEVE.PUSH = true
-            end
-            TcpLib.proccessIncoming(connection)
-            TCBList[connection].RCV.NXT = TCBList[connection].RCV.NXT + TCBList[connection].SEG.LEN
-            if TcpLib.sendData(connection) == false then
-                local ackSegment = TcpLib.createSegment(connection,true,false,false,false,{})
-                TcpLib.sendAck(connection,ackSegment)
-            end
-        else
-            TcpLib.sendData(connection)
-        end
+
+        TcpLib.proccessSegmentText(connection)
+
         if TCBList[connection].Segment.flags.FIN then
-            TCBList[connection].STATE = "FINWAIT"
+            --event.push("tcp_close_return",connection,"connection closing")
+            TCBList[connection].RCV.NXT = TCBList[connection].RCV.NXT + 1
+            local finAck = TcpLib.createSegment(connection,true,false,false,false,{})
+            TcpLib.sendAck(connection,finAck)
+            TCBList[connection].STATE = "CLOSEWAIT"
         end
     end
 end
 
-function tcpSegmentProccessor.FINWAIT1()
-    
+function tcpSegmentProccessor.FINWAIT1(connection)
+    if TcpLib.checkSeq(connection) then
+        if TcpLib.checkRst then
+            return
+        end
+
+        if TCBList[connection].Segment.flags.SYN then
+            TcpLib.resetConnection(connection)
+            return
+        end
+
+        if TcpLib.checkAck(connection) then
+            return
+        end
+        if TCBList[connection].SENDBUFFER.FIN == false and TCBList[connection].SND.UNA == TCBList[connection].SND.NXT then
+            TCBList[connection].STATE = "FINWAIT2"
+        end
+
+        TcpLib.proccessSegmentText(connection)
+
+        if TCBList[connection].SENDBUFFER.FIN == false and TCBList[connection].SND.UNA == TCBList[connection].SND.NXT then
+            if TCBList[connection].Segment.flags.FIN then
+                TCBList[connection].RCV.NXT = TCBList[connection].RCV.NXT + 1
+                local finAck = TcpLib.createSegment(connection,true,false,false,false,{})
+                TcpLib.sendAck(connection,finAck)
+                TCBList[connection].STATE = "TIMEWAIT"
+                event.timer(5,function() event.push("tcp_timewait_timeout",connection) end)
+            end
+        elseif TCBList[connection].Segment.flags.FIN then
+            TCBList[connection].RCV.NXT = TCBList[connection].RCV.NXT + 1
+            local finAck = TcpLib.createSegment(connection,true,false,false,false,{})
+            TcpLib.sendAck(connection,finAck)
+            TCBList[connection].STATE = "CLOSING"
+        end
+    end
 end
 
-function tcpSegmentProccessor.FINWAIT2()
-    
+function tcpSegmentProccessor.FINWAIT2(connection)
+    if TcpLib.checkSeq(connection) then
+        if TcpLib.checkRst then
+            return
+        end
+
+        if TCBList[connection].Segment.flags.SYN then
+            TcpLib.resetConnection(connection)
+            return
+        end
+
+        if TcpLib.checkAck(connection) then
+            return
+        end
+
+        TcpLib.proccessSegmentText(connection)
+
+        if TCBList[connection].Segment.flags.FIN then
+            TCBList[connection].RCV.NXT = TCBList[connection].RCV.NXT + 1
+            local finAck = TcpLib.createSegment(connection,true,false,false,false,{})
+            TcpLib.sendAck(connection,finAck)
+            TCBList[connection].STATE = "TIMEWAIT"
+            event.timer(5,function() event.push("tcp_timewait_timeout",connection) end)
+        end
+    end
 end
 
-function tcpSegmentProccessor.CLOSEWAIT()
-    
+function tcpSegmentProccessor.CLOSEWAIT(connection)
+    if TcpLib.checkSeq(connection) then
+        if TcpLib.checkRst then
+            return
+        end
+
+        if TCBList[connection].Segment.flags.SYN then
+            TcpLib.resetConnection(connection)
+            return
+        end
+
+        if TcpLib.checkAck(connection) then
+            return
+        end
+
+        if TCBList[connection].Segment.flags.FIN then
+            TCBList[connection].RCV.NXT = TCBList[connection].RCV.NXT + 1
+            local finAck = TcpLib.createSegment(connection,true,false,false,false,{})
+            TcpLib.sendAck(connection,finAck)
+        end
+    end
 end
 
-function tcpSegmentProccessor.CLOSING()
-    
+function tcpSegmentProccessor.CLOSING(connection)
+    if TcpLib.checkSeq(connection) then
+        if TCBList[connection].Segment.flags.RST then
+            TCBList[connection] = nil
+            event.push("tcp_close_return",connection,"CLOSED")
+        end
+
+        if TCBList[connection].Segment.flags.SYN then
+            TcpLib.resetConnection(connection)
+            return
+        end
+
+        if TcpLib.checkAck(connection) then
+            return
+        end
+        if TCBList[connection].SND.UNA == TCBList[connection].SND.NXT then
+            TCBList[connection].STATE = "TIMEWAIT"
+            event.timer(5,function() event.push("tcp_timewait_timeout",connection) end)
+        end
+
+        if TCBList[connection].Segment.flags.FIN then
+            TCBList[connection].RCV.NXT = TCBList[connection].RCV.NXT + 1
+            local finAck = TcpLib.createSegment(connection,true,false,false,false,{})
+            TcpLib.sendAck(connection,finAck)
+        end
+    end
 end
 
-function tcpSegmentProccessor.LASTACK()
-    
+function tcpSegmentProccessor.LASTACK(connection)
+    if TcpLib.checkSeq(connection) then
+        if TCBList[connection].Segment.flags.RST then
+            TCBList[connection] = nil
+            event.push("tcp_close_return",connection,"CLOSED")
+        end
+
+        if TCBList[connection].Segment.flags.SYN then
+            TcpLib.resetConnection(connection)
+            return
+        end
+
+        TcpLib.updateUna(connection)
+        if TCBList[connection].SND.UNA == TCBList[connection].SND.NXT then
+            TCBList[connection] = nil
+            event.push("tcp_close_return",connection,"CLOSED")
+        end
+
+        if TCBList[connection].Segment.flags.FIN then
+            TCBList[connection].RCV.NXT = TCBList[connection].RCV.NXT + 1
+            local finAck = TcpLib.createSegment(connection,true,false,false,false,{})
+            TcpLib.sendAck(connection,finAck)
+        end
+    end
 end
 
-function tcpSegmentProccessor.TIMEWAIT()
-    
+function tcpSegmentProccessor.TIMEWAIT(connection)
+    if TcpLib.checkSeq(component) then
+        if TCBList[connection].Segment.flags.RST then
+            TCBList[connection] = nil
+            event.push("tcp_close_return",connection,"CLOSED")
+        end
+
+        if TCBList[connection].Segment.flags.SYN then
+            TcpLib.resetConnection(connection)
+            return
+        end
+
+        if TCBList[connection].Segment.flags.FIN then
+            TCBList[connection].RCV.NXT = TCBList[connection].RCV.NXT + 1
+            local finAck = TcpLib.createSegment(connection,true,false,false,false,{})
+            TcpLib.sendAck(connection,finAck)
+        end
+    end
 end
 
 return tcpSegmentProccessor

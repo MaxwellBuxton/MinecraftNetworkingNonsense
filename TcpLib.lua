@@ -27,11 +27,6 @@ function TcpLib.getDefaultConnection(port)
     return localSocket.IP..port.."0.0.0.0"..0
 end
 
---sends message to application about opening connection status
-function TcpLib.returnOpen(connectionId,message)
-    event.push("tcp_open_return",TCBList[connectionId].LOCALSOCKET.PORT,connectionId,TCBList[connectionId].STATE,message)
-end
-
 --updates SND.UNA to latest ACK and removes any queued transmissions that have been acknowledged
 function TcpLib.updateUna(connectionId)
     TCBList[connectionId].SND.UNA = TCBList[connectionId].SEG.ACK
@@ -138,10 +133,15 @@ function TcpLib.proccessIncoming(connectionId)
     if TCBList[connectionId].RECIEVE.REQUEST == true and #TCBList[connectionId].RECIEVE.INCOMING > 0 then
         local RecievedData = TCBList[connectionId].RECIEVE.INCOMING
         local push = TCBList[connectionId].RECIEVE.PUSH
-        event.push("tcp_recieve_return",connectionId,push,RecievedData)
+        event.push("tcp_recieve_return",connectionId,RecievedData,push,"OK")
         TCBList[connectionId].RECIEVE.INCOMING = {}
         TCBList[connectionId].RECIEVE.PUSH = false
         TCBList[connectionId].RECIEVE.REQUEST = false
+    else
+        if TCBList[connectionId].RECIEVE.REQUEST == true and TCBList[connectionId].STATE == "CLOSEWAIT" and #TCBList[connectionId].RECIEVE.INCOMING == 0 then
+            TCBList[connectionId].RECIEVE.REQUEST = false
+            event.push("tcp_recieve_return",connectionId,nil,nil,"CLOSING")
+        end
     end
 end
 
@@ -156,7 +156,47 @@ function TcpLib.sendData(connectionId)
             TcpLib.send(connectionId,sendSegment)
             TCBList[connectionId].SND.NXT = TCBList[connectionId].SND.NXT + dataLength
             return true
+        elseif TCBList[connectionId].SENDBUFFER.FIN == true then
+            local finSegment = TcpLib.createSegment(connectionId,true,false,false,true,{})
+            TCBList[connectionId].SND.NXT = TCBList[connectionId].SND.NXT + 1
+            TcpLib.send(connectionId,finSegment)
+            TCBList[connectionId].SENDBUFFER.FIN = false
+            if TCBList[connectionId].STATE == "CLOSEWAIT" then
+                TCBList[connectionId].STATE = "LASTACK"
+            end
         end
+    end
+    return false
+end
+
+function TcpLib.proccessSegmentText(connectionId)
+    local proccessText = s.serialize(TCBList[connectionId].Segment.data)
+    if proccessText ~= "{}" or proccessText ~= "" or proccessText ~= nil then
+        table.insert(TCBList[connectionId].RECIEVE.INCOMING, proccessText)
+        if TCBList[connectionId].Segment.flags.PSH == true then
+            TCBList[connectionId].RECIEVE.PUSH = true
+        end
+        TcpLib.proccessIncoming(connectionId)
+        TCBList[connectionId].RCV.NXT = TCBList[connectionId].RCV.NXT + TCBList[connectionId].SEG.LEN
+        if TcpLib.sendData(connectionId) == false then
+            local ackSegment = TcpLib.createSegment(connectionId,true,false,false,false,{})
+            TcpLib.sendAck(connectionId,ackSegment)
+        end
+    else
+        TcpLib.sendData(connectionId)
+    end
+end
+
+function TcpLib.checkAck(connectionId)
+    if TCBList[connectionId].Segment.flags.ACK == false then
+        return true
+    end
+    if TCBList[connectionId].SND.UNA < TCBList[connectionId].SEG.ACK and TCBList[connectionId].SEG.ACK <= TCBList[connectionId].SND.NXT then
+        TcpLib.updateUna(connectionId)
+    elseif TCBList[connectionId].SEG.ACK > TCBList[connectionId].SND.NXT then
+        local ackSegment = TcpLib.createSegment(connectionId,true,false,false,false,{})
+        TcpLib.sendAck(connectionId,ackSegment)
+        return true
     end
     return false
 end
