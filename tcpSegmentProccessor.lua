@@ -195,6 +195,7 @@ function tcpSegmentProccessor.CLOSING(connection)
         if TCBList[connection].Segment.flags.RST then
             TCBList[connection] = nil
             event.push("tcp_close_return",connection,"CLOSED")
+            return
         end
 
         if TCBList[connection].Segment.flags.SYN then
@@ -223,6 +224,7 @@ function tcpSegmentProccessor.LASTACK(connection)
         if TCBList[connection].Segment.flags.RST then
             TCBList[connection] = nil
             event.push("tcp_close_return",connection,"CLOSED")
+            return
         end
 
         if TCBList[connection].Segment.flags.SYN then
@@ -234,6 +236,7 @@ function tcpSegmentProccessor.LASTACK(connection)
         if TCBList[connection].SND.UNA == TCBList[connection].SND.NXT then
             TCBList[connection] = nil
             event.push("tcp_close_return",connection,"CLOSED")
+            return
         end
 
         if TCBList[connection].Segment.flags.FIN then
@@ -249,6 +252,7 @@ function tcpSegmentProccessor.TIMEWAIT(connection)
         if TCBList[connection].Segment.flags.RST then
             TCBList[connection] = nil
             event.push("tcp_close_return",connection,"CLOSED")
+            return
         end
 
         if TCBList[connection].Segment.flags.SYN then
