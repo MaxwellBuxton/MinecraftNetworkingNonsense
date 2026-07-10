@@ -1,3 +1,5 @@
+local bitArray = require("BitIO")
+
 local InternetProtocol = {}
 local interfaces = {}
 local routes = {}
@@ -19,8 +21,35 @@ local header = {
     destinationAddress = {32,"number"}
 }
 
-local function proccessDatagram(localHeader,data,target,interface)
-    
+local function fragment(localHeader,data,maxLen,fragments)
+    if localHeader.totalLength <= maxLen then
+        local newFrame = bitArray.create("",header)
+        newFrame:SerializeTemplate(localHeader)
+        table.insert(fragments, newFrame:byteString() + data)
+        return
+    end
+    if localHeader.dontFragment == 1 then
+        return
+    end
+    local newHeader = {}
+    for i,v in pairs(localHeader) do
+        newHeader[i] = v
+    end
+    local NFB = (maxLen - localHeader.ihl * 4)/8
+
+    newHeader.moreFragment = 1
+    newHeader.totalLength = (newHeader.ihl*4) + (NFB*8)
+    local newFrame = bitArray.create("",header)
+    newFrame:SerializeTemplate(newHeader)
+    table.insert(fragments,newFrame:byteString() + string.sub(data,1,NFB))
+
+    newHeader = {}
+    for i,v in pairs(localHeader) do
+        newHeader[i] = v
+    end
+    newHeader.totalLength = localHeader.totalLength - NFB*8
+    newHeader.fragmentOffset = (localHeader.fragmentOffset or 0) + NFB
+    fragment(newHeader,string.sub(data,NFB),maxLen,fragments)
 end
 
 function InternetProtocol.getInterface(id)
@@ -52,15 +81,26 @@ function InternetProtocol.send(dst,prot,data,id,df,options)
         protocol = prot,
         timeToLive = 0xFF,
         sourceAddress = interface.ip,
-        destinationAddress = dst
+        destinationAddress = dst,
+        identification = id
     }
     newHeader.totalLength = newHeader.ihl*4 + string.len(data)
 
-    
+    local fragments = {}
+    fragment(newHeader,data,interface.mtu,fragments)
+    if fragments.len() == 0 then
+        return false, "no fragments could be produced"
+    end
+    for i,v in ipairs(fragments) do
+        interface:Send(targetGateway,v)
+    end
+    return true
 end
 
-function InternetProtocol.receive()
-    
+function InternetProtocol.receive(data)
+    local recArray = bitArray.create(string.sub(data,1,20),header)
+    local recHeader = recArray:DeSerializeTemplate()
+
 end
 
 function InternetProtocol.addRoute()
